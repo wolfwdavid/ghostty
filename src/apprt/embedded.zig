@@ -342,6 +342,7 @@ pub const App = struct {
 pub const Platform = union(PlatformTag) {
     macos: MacOS,
     ios: IOS,
+    qt: Qt,
 
     // If our build target for libghostty is not darwin then we do
     // not include macos support at all.
@@ -355,6 +356,17 @@ pub const Platform = union(PlatformTag) {
         uiview: objc.Object,
     } else void;
 
+    /// Qt platform for Linux/Windows. Uses OpenGL rendering.
+    pub const Qt = struct {
+        native_window: ?*anyopaque,
+        gl_context: ?*anyopaque,
+        gl_display: ?*anyopaque,
+        width: u32,
+        height: u32,
+        scale_factor: f64,
+        is_wayland: bool,
+    };
+
     // The C ABI compatible version of this union. The tag is expected
     // to be stored elsewhere.
     pub const C = extern union {
@@ -364,6 +376,16 @@ pub const Platform = union(PlatformTag) {
 
         ios: extern struct {
             uiview: ?*anyopaque,
+        },
+
+        qt: extern struct {
+            native_window: ?*anyopaque,
+            gl_context: ?*anyopaque,
+            gl_display: ?*anyopaque,
+            width: u32,
+            height: u32,
+            scale_factor: f64,
+            is_wayland: bool,
         },
     };
 
@@ -384,6 +406,16 @@ pub const Platform = union(PlatformTag) {
                     break :ios error.UIViewMustBeSet);
                 break :ios .{ .ios = .{ .uiview = uiview } };
             } else error.UnsupportedPlatform,
+
+            .qt => .{ .qt = .{
+                .native_window = c_platform.qt.native_window,
+                .gl_context = c_platform.qt.gl_context,
+                .gl_display = c_platform.qt.gl_display,
+                .width = c_platform.qt.width,
+                .height = c_platform.qt.height,
+                .scale_factor = c_platform.qt.scale_factor,
+                .is_wayland = c_platform.qt.is_wayland,
+            } },
         };
     }
 };
@@ -394,6 +426,7 @@ pub const PlatformTag = enum(c_int) {
 
     macos = 1,
     ios = 2,
+    qt = 3,
 };
 
 pub const EnvVar = extern struct {

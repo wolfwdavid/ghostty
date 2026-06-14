@@ -6,6 +6,7 @@
 const CodepointWidth = @This();
 
 const std = @import("std");
+const builtin = @import("builtin");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Benchmark = @import("Benchmark.zig");
@@ -101,7 +102,29 @@ fn stepNoop(ptr: *anyopaque) Benchmark.Error!void {
     _ = ptr;
 }
 
-extern "c" fn wcwidth(c: u32) c_int;
+const wcwidth = if (builtin.os.tag == .windows)
+    struct {
+        fn f(c: u32) c_int {
+            // Simplified wcwidth for Windows (benchmark only).
+            // Returns 1 for most printable chars, 2 for wide CJK, 0 for control.
+            if (c == 0) return 0;
+            if (c < 32 or (c >= 0x7f and c < 0xa0)) return -1;
+            if (c >= 0x1100 and
+                (c <= 0x115f or c == 0x2329 or c == 0x232a or
+                (c >= 0x2e80 and c <= 0xa4cf and c != 0x303f) or
+                (c >= 0xac00 and c <= 0xd7a3) or
+                (c >= 0xf900 and c <= 0xfaff) or
+                (c >= 0xfe10 and c <= 0xfe19) or
+                (c >= 0xfe30 and c <= 0xfe6f) or
+                (c >= 0xff00 and c <= 0xff60) or
+                (c >= 0xffe0 and c <= 0xffe6) or
+                (c >= 0x20000 and c <= 0x2fffd) or
+                (c >= 0x30000 and c <= 0x3fffd))) return 2;
+            return 1;
+        }
+    }.f
+else
+    @extern(*const fn (u32) callconv(.c) c_int, .{ .name = "wcwidth" });
 
 fn stepWcwidth(ptr: *anyopaque) Benchmark.Error!void {
     const self: *CodepointWidth = @ptrCast(@alignCast(ptr));
