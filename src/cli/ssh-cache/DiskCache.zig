@@ -25,6 +25,16 @@ pub const DefaultPathError = Allocator.Error || error{
 
 pub const Error = error{ CacheIsLocked, HostnameIsInvalid };
 
+/// Acquire an exclusive lock on the cache file. zig 0.15.2's std File.tryLock
+/// has a Windows code path that fails to compile (ziglang/zig#18430), so real
+/// locking stays POSIX-only. The explicit error set keeps `CacheIsLocked` in
+/// the inferred error set of callers on every target, which the ssh-cache CLI's
+/// error switch relies on.
+fn lockCacheFile(file: std.fs.File) error{CacheIsLocked}!void {
+    if (comptime builtin.os.tag == .windows) return;
+    _ = file.tryLock(.exclusive) catch return error.CacheIsLocked;
+}
+
 /// Returns the default path for the cache for a given program.
 ///
 /// On all platforms, this is `${XDG_STATE_HOME}/ghostty/ssh_cache`.
@@ -94,10 +104,8 @@ pub fn add(
     };
     defer file.close();
 
-    // Lock
-    // Causes a compile failure in the Zig std library on Windows, see:
-    // https://github.com/ziglang/zig/issues/18430
-    if (comptime builtin.os.tag != .windows) _ = file.tryLock(.exclusive) catch return error.CacheIsLocked;
+    // Lock the cache file (POSIX-only; see lockCacheFile for the Windows caveat).
+    try lockCacheFile(file);
     defer if (comptime builtin.os.tag != .windows) file.unlock();
 
     var entries = try readEntries(alloc, file);
@@ -148,10 +156,8 @@ pub fn remove(
     defer file.close();
     try fixupPermissions(file);
 
-    // Lock
-    // Causes a compile failure in the Zig std library on Windows, see:
-    // https://github.com/ziglang/zig/issues/18430
-    if (comptime builtin.os.tag != .windows) _ = file.tryLock(.exclusive) catch return error.CacheIsLocked;
+    // Lock the cache file (POSIX-only; see lockCacheFile for the Windows caveat).
+    try lockCacheFile(file);
     defer if (comptime builtin.os.tag != .windows) file.unlock();
 
     // Read existing entries

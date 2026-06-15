@@ -6,6 +6,7 @@
 const CodepointWidth = @This();
 
 const std = @import("std");
+const builtin = @import("builtin");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Benchmark = @import("Benchmark.zig");
@@ -101,7 +102,20 @@ fn stepNoop(ptr: *anyopaque) Benchmark.Error!void {
     _ = ptr;
 }
 
-extern "c" fn wcwidth(c: u32) c_int;
+// The system wcwidth(3) is POSIX-only; Windows has no libc wcwidth. Bind the
+// extern on POSIX, and stub it on Windows so libghostty links (this benchmark
+// mode — ghostty's width vs. the system's — is simply unavailable on Windows).
+const wcwidth = if (builtin.os.tag != .windows)
+    struct {
+        extern "c" fn wcwidth(c: u32) c_int;
+    }.wcwidth
+else
+    struct {
+        fn wcwidth(c: u32) c_int {
+            _ = c;
+            return 1;
+        }
+    }.wcwidth;
 
 fn stepWcwidth(ptr: *anyopaque) Benchmark.Error!void {
     const self: *CodepointWidth = @ptrCast(@alignCast(ptr));
