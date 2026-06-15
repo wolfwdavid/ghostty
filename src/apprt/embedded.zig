@@ -342,6 +342,7 @@ pub const App = struct {
 pub const Platform = union(PlatformTag) {
     macos: MacOS,
     ios: IOS,
+    qt: Qt,
 
     // If our build target for libghostty is not darwin then we do
     // not include macos support at all.
@@ -355,6 +356,19 @@ pub const Platform = union(PlatformTag) {
         uiview: objc.Object,
     } else void;
 
+    /// The Qt platform (Linux/Windows). Carries a native window handle plus a
+    /// host-created OpenGL context (WGL/GLX/EGL); consumed by the OpenGL
+    /// renderer. Available on all targets since it holds only opaque handles.
+    pub const Qt = struct {
+        native_window: ?*anyopaque,
+        gl_context: ?*anyopaque,
+        gl_display: ?*anyopaque,
+        width: u32,
+        height: u32,
+        scale_factor: f64,
+        is_wayland: bool,
+    };
+
     // The C ABI compatible version of this union. The tag is expected
     // to be stored elsewhere.
     pub const C = extern union {
@@ -364,6 +378,17 @@ pub const Platform = union(PlatformTag) {
 
         ios: extern struct {
             uiview: ?*anyopaque,
+        },
+
+        // Must match ghostty_platform_qt_s in include/ghostty.h.
+        qt: extern struct {
+            native_window: ?*anyopaque,
+            gl_context: ?*anyopaque,
+            gl_display: ?*anyopaque,
+            width: u32,
+            height: u32,
+            scale_factor: f64,
+            is_wayland: bool,
         },
     };
 
@@ -384,6 +409,21 @@ pub const Platform = union(PlatformTag) {
                     break :ios error.UIViewMustBeSet);
                 break :ios .{ .ios = .{ .uiview = uiview } };
             } else error.UnsupportedPlatform,
+
+            .qt => qt: {
+                const config = c_platform.qt;
+                if (config.native_window == null)
+                    break :qt error.NativeWindowMustBeSet;
+                break :qt .{ .qt = .{
+                    .native_window = config.native_window,
+                    .gl_context = config.gl_context,
+                    .gl_display = config.gl_display,
+                    .width = config.width,
+                    .height = config.height,
+                    .scale_factor = config.scale_factor,
+                    .is_wayland = config.is_wayland,
+                } };
+            },
         };
     }
 };
@@ -394,6 +434,7 @@ pub const PlatformTag = enum(c_int) {
 
     macos = 1,
     ios = 2,
+    qt = 3,
 };
 
 pub const EnvVar = extern struct {

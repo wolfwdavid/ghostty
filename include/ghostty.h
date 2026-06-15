@@ -38,6 +38,7 @@ typedef enum {
   GHOSTTY_PLATFORM_INVALID,
   GHOSTTY_PLATFORM_MACOS,
   GHOSTTY_PLATFORM_IOS,
+  GHOSTTY_PLATFORM_QT,
 } ghostty_platform_e;
 
 typedef enum {
@@ -426,9 +427,20 @@ typedef struct {
   void* uiview;
 } ghostty_platform_ios_s;
 
+typedef struct {
+  void* native_window;   // X11: Window handle, Win32: HWND, Wayland: wl_surface*
+  void* gl_context;      // Platform GL context (EGL/WGL/GLX)
+  void* gl_display;      // EGL display or X11 Display* (NULL on Windows)
+  uint32_t width;
+  uint32_t height;
+  double scale_factor;
+  bool is_wayland;       // true if Wayland, false if X11/Windows
+} ghostty_platform_qt_s;
+
 typedef union {
   ghostty_platform_macos_s macos;
   ghostty_platform_ios_s ios;
+  ghostty_platform_qt_s qt;
 } ghostty_platform_u;
 
 typedef enum {
