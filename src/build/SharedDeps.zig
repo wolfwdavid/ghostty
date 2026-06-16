@@ -535,15 +535,19 @@ pub fn add(
         }
     }
 
-    // If we're building an exe then we have additional dependencies.
-    if (step.kind != .lib) {
-        // We always statically compile glad
+    // Statically compile glad (the GL loader) whenever we use the OpenGL
+    // renderer. Needed for executables (GTK) and for libghostty alike: the
+    // embedded/Qt apprt loads GL through glad on its own render thread.
+    if (self.config.renderer == .opengl) {
         step.addIncludePath(b.path("vendor/glad/include/"));
         step.addCSourceFile(.{
             .file = b.path("vendor/glad/src/gl.c"),
             .flags = &.{},
         });
+    }
 
+    // If we're building an exe then we have additional dependencies.
+    if (step.kind != .lib) {
         // When we're targeting flatpak we ALWAYS link GTK so we
         // get access to glib for dbus.
         if (self.config.flatpak) step.linkSystemLibrary2("gtk4", dynamic_link_opts);

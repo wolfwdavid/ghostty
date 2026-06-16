@@ -10,6 +10,7 @@ const apprt = @import("../apprt.zig");
 const font = @import("../font/main.zig");
 const configpkg = @import("../config.zig");
 const rendererpkg = @import("../renderer.zig");
+const wgl = @import("wgl.zig");
 const Renderer = rendererpkg.GenericRenderer(OpenGL);
 
 pub const GraphicsAPI = OpenGL;
@@ -170,9 +171,9 @@ pub fn surfaceInit(surface: *apprt.Surface) !void {
         => try prepareContext(null),
 
         apprt.embedded => {
-            // TODO(mitchellh): this does nothing today to allow libghostty
-            // to compile for OpenGL targets but libghostty is strictly
-            // broken for rendering on this platforms.
+            // The embedded (Qt) renderer is driven from its own render
+            // thread, so the GL context is made current and loaded in
+            // threadEnter rather than here on the main thread.
         },
     }
 
@@ -196,7 +197,6 @@ pub fn finalizeSurfaceInit(self: *const OpenGL, surface: *apprt.Surface) !void {
 /// Callback called by renderer.Thread when it begins.
 pub fn threadEnter(self: *const OpenGL, surface: *apprt.Surface) !void {
     _ = self;
-    _ = surface;
 
     switch (apprt.runtime) {
         else => @compileError("unsupported app runtime for OpenGL"),
@@ -208,10 +208,28 @@ pub fn threadEnter(self: *const OpenGL, surface: *apprt.Surface) !void {
             // on the main thread. As such, we don't do anything here.
         },
 
-        apprt.embedded => {
-            // TODO(mitchellh): this does nothing today to allow libghostty
-            // to compile for OpenGL targets but libghostty is strictly
-            // broken for rendering on this platforms.
+        apprt.embedded => switch (surface.platform) {
+            // The Qt platform hands us a host-created GL context + native
+            // window. Make it current on this (render) thread and load GL via
+            // glad's built-in loader, which uses the platform's native
+            // getProcAddress (wgl/glx/egl).
+            .qt => |qt| {
+                if (comptime builtin.os.tag == .windows) {
+                    try wgl.makeCurrent(
+                        qt.native_window orelse return error.NativeWindowMustBeSet,
+                        qt.gl_context orelse return error.GLContextMustBeSet,
+                    );
+                    // Load GL via our WGL loader (glad's built-in loader isn't
+                    // compiled into libghostty).
+                    try prepareContext(&wgl.getProcAddress);
+                } else {
+                    // TODO: Linux GLX/EGL makeCurrent for the Qt platform.
+                    return error.UnsupportedPlatform;
+                }
+            },
+
+            // Other embedded platforms (macOS/iOS) use Metal, not this renderer.
+            else => {},
         },
     }
 }
@@ -229,7 +247,7 @@ pub fn threadExit(self: *const OpenGL) void {
         },
 
         apprt.embedded => {
-            // TODO: see threadEnter
+            if (comptime builtin.os.tag == .windows) wgl.clearCurrent();
         },
     }
 }
@@ -328,6 +346,12 @@ pub fn present(self: *OpenGL, target: Target) !void {
 
     // Keep track of this target in case we need to repeat it.
     self.last_target = target;
+
+    // The embedded (Qt) apprt owns no swap loop of its own, so present the
+    // back buffer here. GTK swaps via its own GLArea; macOS uses Metal.
+    if (comptime apprt.runtime == apprt.embedded and builtin.os.tag == .windows) {
+        wgl.swapBuffers();
+    }
 }
 
 /// Present the last presented target again.
