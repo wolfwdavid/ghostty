@@ -149,11 +149,16 @@ fn prepareContext(getProcAddress: anytype) !void {
         return error.OpenGLOutdated;
     }
 
-    // Enable debug output for the context.
-    try gl.enable(gl.c.GL_DEBUG_OUTPUT);
-
-    // Register our debug message callback with the OpenGL context.
-    gl.glad.context.DebugMessageCallback.?(glDebugMessageCallback, null);
+    // Enable debug output for the context. glDebugMessageCallback is GL 4.3
+    // core (or via KHR_debug); a host context that only guarantees 3.3 may not
+    // expose it, so guard the optional fn pointer instead of unwrapping it (an
+    // unchecked null call is UB in ReleaseFast -> access violation).
+    if (gl.glad.context.DebugMessageCallback) |debugMessageCallback| {
+        try gl.enable(gl.c.GL_DEBUG_OUTPUT);
+        debugMessageCallback(glDebugMessageCallback, null);
+    } else {
+        log.info("GL_DEBUG_OUTPUT unavailable on this context, skipping", .{});
+    }
 
     // Enable SRGB framebuffer for linear blending support.
     try gl.enable(gl.c.GL_FRAMEBUFFER_SRGB);
@@ -161,19 +166,33 @@ fn prepareContext(getProcAddress: anytype) !void {
 
 /// This is called early right after surface creation.
 pub fn surfaceInit(surface: *apprt.Surface) !void {
-    _ = surface;
-
     switch (apprt.runtime) {
         else => @compileError("unsupported app runtime for OpenGL"),
 
         // GTK uses global OpenGL context so we load from null.
-        apprt.gtk,
-        => try prepareContext(null),
+        apprt.gtk => try prepareContext(null),
 
-        apprt.embedded => {
-            // The embedded (Qt) renderer is driven from its own render
-            // thread, so the GL context is made current and loaded in
-            // threadEnter rather than here on the main thread.
+        // The generic renderer eagerly creates all of its GPU resources
+        // (buffers, textures, shaders) in Renderer.init on THIS (main) thread.
+        // Those calls require a current GL context with glad loaded, so for the
+        // Qt platform we must make the host context current and load glad here
+        // — not only later on the render thread. finalizeSurfaceInit releases
+        // the context so the render thread can take it over in threadEnter.
+        apprt.embedded => switch (surface.platform) {
+            .qt => |qt| {
+                if (comptime builtin.os.tag == .windows) {
+                    try wgl.makeCurrent(
+                        qt.native_window orelse return error.NativeWindowMustBeSet,
+                        qt.gl_context orelse return error.GLContextMustBeSet,
+                    );
+                    try prepareContext(&wgl.getProcAddress);
+                } else {
+                    // TODO: Linux GLX/EGL makeCurrent for the Qt platform.
+                    return error.UnsupportedPlatform;
+                }
+            },
+            // Other embedded platforms (macOS/iOS) use Metal, not this renderer.
+            else => {},
         },
     }
 
@@ -191,7 +210,22 @@ pub fn surfaceInit(surface: *apprt.Surface) !void {
 /// thread for final main thread setup requirements.
 pub fn finalizeSurfaceInit(self: *const OpenGL, surface: *apprt.Surface) !void {
     _ = self;
-    _ = surface;
+
+    switch (apprt.runtime) {
+        // Release the host GL context from this (main) thread so the renderer
+        // thread can make it current in threadEnter. glad's resolved entry
+        // points stay valid (process-global) and the GPU objects created during
+        // init belong to the context, so they survive the thread handoff.
+        apprt.embedded => switch (surface.platform) {
+            .qt => {
+                if (comptime builtin.os.tag == .windows) {
+                    wgl.clearCurrent();
+                }
+            },
+            else => {},
+        },
+        else => {},
+    }
 }
 
 /// Callback called by renderer.Thread when it begins.
@@ -296,6 +330,20 @@ pub fn initShaders(
 /// Get the current size of the runtime surface.
 pub fn surfaceSize(self: *const OpenGL) !struct { width: u32, height: u32 } {
     _ = self;
+
+    // On the embedded Qt/Windows path nothing keeps GL_VIEWPORT in sync with the
+    // host window as it resizes (GTK's GLArea does that for us; raw WGL does not),
+    // so GL_VIEWPORT would be stuck at the size from the first makeCurrent. Query
+    // the real HWND client size and set the viewport from it. This is the first
+    // thing draw() calls each frame, so the viewport is correct for the render
+    // and the render target is sized to the live window.
+    if (comptime apprt.runtime == apprt.embedded and builtin.os.tag == .windows) {
+        if (wgl.clientSize()) |sz| {
+            gl.viewport(0, 0, @intCast(sz.width), @intCast(sz.height)) catch {};
+            return .{ .width = sz.width, .height = sz.height };
+        }
+    }
+
     var viewport: [4]gl.c.GLint = undefined;
     gl.glad.context.GetIntegerv.?(gl.c.GL_VIEWPORT, &viewport);
     return .{

@@ -18,6 +18,8 @@ const HGLRC = *anyopaque;
 const HMODULE = *anyopaque;
 const BOOL = i32;
 
+const RECT = extern struct { left: i32, top: i32, right: i32, bottom: i32 };
+
 /// Opaque GL function pointer, matching glad's expectation.
 pub const GlProc = *const fn () callconv(.c) void;
 
@@ -28,6 +30,7 @@ extern "opengl32" fn wglMakeCurrent(hdc: ?HDC, hglrc: ?HGLRC) callconv(.winapi) 
 extern "opengl32" fn wglGetProcAddress(name: [*:0]const u8) callconv(.winapi) ?GlProc;
 extern "kernel32" fn LoadLibraryA(name: [*:0]const u8) callconv(.winapi) ?HMODULE;
 extern "kernel32" fn GetProcAddress(module: ?HMODULE, name: [*:0]const u8) callconv(.winapi) ?GlProc;
+extern "user32" fn GetClientRect(hWnd: ?HWND, rect: *RECT) callconv(.winapi) BOOL;
 
 var opengl32_module: ?HMODULE = null;
 
@@ -60,6 +63,20 @@ pub fn makeCurrent(native_window: *anyopaque, gl_context: *anyopaque) Error!void
     }
     cur_hwnd = hwnd;
     cur_hdc = hdc;
+}
+
+/// The current thread's window client size in physical pixels. Nothing keeps
+/// GL_VIEWPORT in sync with the host window on the embedded WGL path (GTK's
+/// GLArea does this for us, raw WGL does not), so the renderer queries this
+/// each frame to drive the viewport + render-target size.
+pub fn clientSize() ?struct { width: u32, height: u32 } {
+    const hwnd = cur_hwnd orelse return null;
+    var r: RECT = undefined;
+    if (GetClientRect(hwnd, &r) == 0) return null;
+    const w = r.right - r.left;
+    const h = r.bottom - r.top;
+    if (w <= 0 or h <= 0) return null;
+    return .{ .width = @intCast(w), .height = @intCast(h) };
 }
 
 /// Swap the front/back buffers for the current thread's window.
