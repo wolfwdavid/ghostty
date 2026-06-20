@@ -210,7 +210,11 @@ fn preferredLanguageFromCocoa(
     return slice[0 .. slice.len - 1 :0];
 }
 
-const LC_ALL: c_int = 6; // from locale.h
+// LC_ALL's integer value differs by libc. glibc uses 6, but Windows' UCRT
+// (and MSVCRT) use 0; valid categories there are only 0-5. Passing 6 to the
+// Windows setlocale is an invalid category, which trips UCRT's invalid-parameter
+// handler and __fastfail (process exits 0xC0000409). Select the value per-OS.
+const LC_ALL: c_int = if (builtin.os.tag == .windows) 0 else 6; // from locale.h
 const LC_ALL_MASK: c_int = 0x7fffffff; // from locale.h
 const locale_t = ?*anyopaque;
 extern "c" fn setlocale(category: c_int, locale: ?[*]const u8) ?[*:0]u8;
