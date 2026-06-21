@@ -43,6 +43,11 @@ alloc: std.mem.Allocator,
 /// Alpha blending mode
 blending: configpkg.Config.AlphaBlending,
 
+/// The runtime surface. On the embedded Qt/Windows path we re-read its native
+/// window each frame so we can re-bind the GL context if the host recreates the
+/// native window (e.g. Qt reparenting a pane during a split).
+rt_surface: *apprt.Surface,
+
 /// The most recently presented target, in case we need to present it again.
 last_target: ?Target = null,
 
@@ -53,6 +58,7 @@ pub fn init(alloc: Allocator, opts: rendererpkg.Options) error{}!OpenGL {
     return .{
         .alloc = alloc,
         .blending = opts.config.blending,
+        .rt_surface = opts.rt_surface,
     };
 }
 
@@ -305,7 +311,27 @@ pub fn displayRealized(self: *const OpenGL) void {
 ///
 /// Right now there's nothing we need to do for OpenGL.
 pub fn drawFrameStart(self: *OpenGL) void {
-    _ = self;
+    // On the embedded Qt/Windows path the host can recreate the native window
+    // (Qt reparents a pane's WA_NativeWindow widget during a split, which makes
+    // a fresh HWND). The old HWND — and the DC/context binding to it — is then
+    // dead. Detect a native-window change here, before any GL for the frame,
+    // and re-bind the existing GL context to the new window.
+    if (comptime apprt.runtime == apprt.embedded and builtin.os.tag == .windows) {
+        switch (self.rt_surface.platform) {
+            .qt => |qt| {
+                const want = qt.native_window orelse return;
+                const bound = wgl.boundHwnd();
+                if (bound == null or bound.? != want) {
+                    const ctx = qt.gl_context orelse return;
+                    wgl.clearCurrent();
+                    wgl.makeCurrent(want, ctx) catch |err| {
+                        log.warn("GL re-bind to new native window failed err={}", .{err});
+                    };
+                }
+            },
+            else => {},
+        }
+    }
 }
 
 /// Actions taken after `drawFrame` is done.

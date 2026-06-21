@@ -1784,6 +1784,21 @@ pub const CAPI = struct {
         surface.updateSize(w, h);
     }
 
+    /// Update the native window handle for a surface. Used by the Qt embedder on
+    /// Windows when the host recreates the native window (Qt reparents a pane's
+    /// WA_NativeWindow widget during a split), so the renderer can re-bind its GL
+    /// context to the new window. The GL context handle is unchanged. No-op on
+    /// platforms/surfaces that don't use the Qt platform.
+    export fn ghostty_surface_set_native_window(
+        surface: *Surface,
+        native_window: ?*anyopaque,
+    ) void {
+        switch (surface.platform) {
+            .qt => |*qt| qt.native_window = native_window,
+            else => {},
+        }
+    }
+
     /// Return the size information a surface has.
     export fn ghostty_surface_size(surface: *Surface) SurfaceSize {
         const grid_size = surface.core_surface.size.grid();

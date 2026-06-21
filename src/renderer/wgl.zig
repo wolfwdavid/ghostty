@@ -31,6 +31,7 @@ extern "opengl32" fn wglGetProcAddress(name: [*:0]const u8) callconv(.winapi) ?G
 extern "kernel32" fn LoadLibraryA(name: [*:0]const u8) callconv(.winapi) ?HMODULE;
 extern "kernel32" fn GetProcAddress(module: ?HMODULE, name: [*:0]const u8) callconv(.winapi) ?GlProc;
 extern "user32" fn GetClientRect(hWnd: ?HWND, rect: *RECT) callconv(.winapi) BOOL;
+extern "user32" fn IsWindow(hWnd: ?HWND) callconv(.winapi) BOOL;
 
 var opengl32_module: ?HMODULE = null;
 
@@ -65,12 +66,20 @@ pub fn makeCurrent(native_window: *anyopaque, gl_context: *anyopaque) Error!void
     cur_hdc = hdc;
 }
 
+/// The native window currently bound (made current) on this thread, if any.
+/// Used by the renderer to detect when the host has swapped the native window
+/// out from under us so it can re-bind.
+pub fn boundHwnd() ?*anyopaque {
+    return cur_hwnd;
+}
+
 /// The current thread's window client size in physical pixels. Nothing keeps
 /// GL_VIEWPORT in sync with the host window on the embedded WGL path (GTK's
 /// GLArea does this for us, raw WGL does not), so the renderer queries this
 /// each frame to drive the viewport + render-target size.
 pub fn clientSize() ?struct { width: u32, height: u32 } {
     const hwnd = cur_hwnd orelse return null;
+    if (IsWindow(hwnd) == 0) return null;
     var r: RECT = undefined;
     if (GetClientRect(hwnd, &r) == 0) return null;
     const w = r.right - r.left;
@@ -79,8 +88,13 @@ pub fn clientSize() ?struct { width: u32, height: u32 } {
     return .{ .width = @intCast(w), .height = @intCast(h) };
 }
 
-/// Swap the front/back buffers for the current thread's window.
+/// Swap the front/back buffers for the current thread's window. Guarded against
+/// a window that the host destroyed mid-frame (e.g. during a reparent), which
+/// would otherwise crash on a dead DC before the renderer re-binds.
 pub fn swapBuffers() void {
+    if (cur_hwnd) |hwnd| {
+        if (IsWindow(hwnd) == 0) return;
+    }
     if (cur_hdc) |hdc| _ = SwapBuffers(hdc);
 }
 
