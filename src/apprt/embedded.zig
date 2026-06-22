@@ -1794,7 +1794,14 @@ pub const CAPI = struct {
         native_window: ?*anyopaque,
     ) void {
         switch (surface.platform) {
-            .qt => |*qt| qt.native_window = native_window,
+            .qt => |*qt| {
+                qt.native_window = native_window;
+                // Wake the render thread so it re-binds the GL context to the new
+                // window and repaints on its next frame. Without this an unfocused
+                // pane — which has no cursor blink to drive periodic redraws —
+                // would stay blank after a split reparents it onto a fresh HWND.
+                surface.core_surface.refreshCallback() catch {};
+            },
             else => {},
         }
     }

@@ -309,8 +309,11 @@ pub fn displayRealized(self: *const OpenGL) void {
 
 /// Actions taken before doing anything in `drawFrame`.
 ///
-/// Right now there's nothing we need to do for OpenGL.
-pub fn drawFrameStart(self: *OpenGL) void {
+/// Returns true if we re-bound the GL context to a freshly created native
+/// window this frame. The new window's default framebuffer (back buffer) is
+/// empty, so the generic renderer must force a full redraw — re-presenting the
+/// last target onto a fresh buffer leaves the pane blank.
+pub fn drawFrameStart(self: *OpenGL) bool {
     // On the embedded Qt/Windows path the host can recreate the native window
     // (Qt reparents a pane's WA_NativeWindow widget during a split, which makes
     // a fresh HWND). The old HWND — and the DC/context binding to it — is then
@@ -319,19 +322,22 @@ pub fn drawFrameStart(self: *OpenGL) void {
     if (comptime apprt.runtime == apprt.embedded and builtin.os.tag == .windows) {
         switch (self.rt_surface.platform) {
             .qt => |qt| {
-                const want = qt.native_window orelse return;
+                const want = qt.native_window orelse return false;
                 const bound = wgl.boundHwnd();
                 if (bound == null or bound.? != want) {
-                    const ctx = qt.gl_context orelse return;
+                    const ctx = qt.gl_context orelse return false;
                     wgl.clearCurrent();
                     wgl.makeCurrent(want, ctx) catch |err| {
                         log.warn("GL re-bind to new native window failed err={}", .{err});
+                        return false;
                     };
+                    return true;
                 }
             },
             else => {},
         }
     }
+    return false;
 }
 
 /// Actions taken after `drawFrame` is done.

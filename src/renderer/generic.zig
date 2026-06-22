@@ -1477,7 +1477,11 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
             // Let our graphics API do any bookkeeping, etc.
             // that it needs to do before / after `drawFrame`.
-            self.api.drawFrameStart();
+            // A true return means the backend re-bound to a freshly created
+            // native window (embedded OpenGL/Windows during a split reparent);
+            // its back buffer is empty, so we must fully redraw rather than
+            // re-present the last target.
+            const rebound_window = self.api.drawFrameStart();
             defer self.api.drawFrameEnd();
 
             // Retrieve the most up-to-date surface size from the Graphics API
@@ -1528,6 +1532,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             // Conditions under which we need to draw the frame, otherwise we
             // don't need to since the previous frame should be identical.
             const needs_redraw =
+                rebound_window or
                 size_changed or
                 self.cells_rebuilt or
                 self.hasAnimations() or

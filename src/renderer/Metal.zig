@@ -214,9 +214,13 @@ fn displayCallback(renderer: *Renderer) align(8) void {
 /// Actions taken before doing anything in `drawFrame`.
 ///
 /// Right now we use this to start an AutoreleasePool.
-pub fn drawFrameStart(self: *Metal) void {
+/// Returns true if the backend re-bound to a freshly created native window
+/// this frame (only the embedded OpenGL/Windows path does this); the generic
+/// renderer treats that as a reason to force a full redraw. Metal never does.
+pub fn drawFrameStart(self: *Metal) bool {
     assert(self.autorelease_pool == null);
     self.autorelease_pool = .init();
+    return false;
 }
 
 /// Actions taken after `drawFrame` is done.
