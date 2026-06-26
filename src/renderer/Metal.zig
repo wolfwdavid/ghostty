@@ -107,6 +107,7 @@ pub fn init(alloc: Allocator, opts: rendererpkg.Options) !Metal {
             .view = switch (opts.rt_surface.platform) {
                 .macos => |v| v.nsview,
                 .ios => |v| v.uiview,
+                .qt => unreachable, // Qt uses OpenGL, not Metal
             },
         },
 
