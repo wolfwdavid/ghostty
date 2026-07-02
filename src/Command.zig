@@ -258,13 +258,17 @@ fn startPosix(self: *Command, arena: Allocator) !void {
 }
 
 fn startWindows(self: *Command, arena: Allocator) !void {
-    const application_w = try std.unicode.utf8ToUtf16LeAllocZ(arena, self.path);
-    const cwd_w = if (self.cwd) |cwd| try std.unicode.utf8ToUtf16LeAllocZ(arena, cwd) else null;
+    // These are all WTF-8-encoded (not necessarily valid UTF-8): the env map
+    // and paths on Windows come from wtf16LeToWtf8 conversions (getEnvMap,
+    // selfExePath), so unpaired surrogates are legal here. Strict utf8ToUtf16Le
+    // rejects them with error.InvalidUtf8 and the spawn fails (dead surface).
+    const application_w = try std.unicode.wtf8ToWtf16LeAllocZ(arena, self.path);
+    const cwd_w = if (self.cwd) |cwd| try std.unicode.wtf8ToWtf16LeAllocZ(arena, cwd) else null;
     const command_line_w = if (self.args.len > 0) b: {
         const command_line = try windowsCreateCommandLine(arena, self.args);
-        break :b try std.unicode.utf8ToUtf16LeAllocZ(arena, command_line);
+        break :b try std.unicode.wtf8ToWtf16LeAllocZ(arena, command_line);
     } else null;
-    const env_w = if (self.env) |env_map| try createWindowsEnvBlock(arena, env_map) else null;
+    const env_w = if (self.env) |env_map| try std.process.createWindowsEnvBlock(arena, env_map) else null;
 
     const any_null_fd = self.stdin == null or self.stdout == null or self.stderr == null;
     const null_fd = if (any_null_fd) try windows.OpenFile(
@@ -462,44 +466,6 @@ fn createNullDelimitedEnvMap(arena: mem.Allocator, env_map: *const EnvMap) ![:nu
     std.debug.assert(i == envp_count);
 
     return envp_buf;
-}
-
-// Copied from Zig. This is a publicly exported function but there is no
-// way to get it from the std package.
-fn createWindowsEnvBlock(allocator: mem.Allocator, env_map: *const EnvMap) ![]u16 {
-    // count bytes needed
-    const max_chars_needed = x: {
-        var max_chars_needed: usize = 4; // 4 for the final 4 null bytes
-        var it = env_map.iterator();
-        while (it.next()) |pair| {
-            // +1 for '='
-            // +1 for null byte
-            max_chars_needed += pair.key_ptr.len + pair.value_ptr.len + 2;
-        }
-        break :x max_chars_needed;
-    };
-    const result = try allocator.alloc(u16, max_chars_needed);
-    errdefer allocator.free(result);
-
-    var it = env_map.iterator();
-    var i: usize = 0;
-    while (it.next()) |pair| {
-        i += try std.unicode.utf8ToUtf16Le(result[i..], pair.key_ptr.*);
-        result[i] = '=';
-        i += 1;
-        i += try std.unicode.utf8ToUtf16Le(result[i..], pair.value_ptr.*);
-        result[i] = 0;
-        i += 1;
-    }
-    result[i] = 0;
-    i += 1;
-    result[i] = 0;
-    i += 1;
-    result[i] = 0;
-    i += 1;
-    result[i] = 0;
-    i += 1;
-    return try allocator.realloc(result, i);
 }
 
 /// Copied from Zig. This function could be made public in child_process.zig instead.
